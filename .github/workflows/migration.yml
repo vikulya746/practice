@@ -43,7 +43,8 @@ jobs:
         run: |
           docker rm -f mattermost-postgres >nul 2>&1
           docker compose -f %COMPOSE_FILE% up -d mattermost-postgres
-          docker network connect legacy_mattermost_network mattermost-postgres >nul 2>&1
+          timeout /t 5 /nobreak >nul
+          docker network connect legacy_mattermost_network mattermost-postgres
           ping -n 11 127.0.0.1 >nul
 
       - name: Run pgloader
