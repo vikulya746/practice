@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 name: Idempotent Mattermost Migration & Upgrade
 on:
   push:
@@ -71,3 +72,6 @@ jobs:
             exit /b 1
           )
           echo Mattermost upgraded successfully and running on Postgres!
+=======
+
+>>>>>>> 2d9d0bd44243c281fdc6e3225eb69eeb5e090514
