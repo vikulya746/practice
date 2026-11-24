@@ -28,6 +28,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - mattermost_network
+      - legacy_mattermost_network
     restart: unless-stopped
 
 networks:
