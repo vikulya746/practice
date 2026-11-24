@@ -1,0 +1,73 @@
+name: Idempotent Mattermost Migration & Upgrade
+on:
+  push:
+    branches: [ "migration" ]
+  workflow_dispatch:
+
+env:
+  COMPOSE_FILE: docker-compose.prod.yml
+  FLAG_FILE: D:\gh-runner-practice\.mattermost_migration_completed
+
+jobs:
+  migrate-and-deploy:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check Migration Status
+        id: check_status
+        shell: cmd
+        run: |
+          if exist "%FLAG_FILE%" (
+            echo already_migrated=true>> %GITHUB_OUTPUT%
+          ) else (
+            echo already_migrated=false>> %GITHUB_OUTPUT%
+          )
+
+      - name: Backup Legacy MySQL
+        if: steps.check_status.outputs.already_migrated == 'false'
+        shell: cmd
+        run: |
+          docker ps | findstr "mattermost-mysql" >nul
+          if errorlevel 1 (
+            echo Error: Legacy MySQL container is not running!
+            exit /b 1
+          )
+          docker exec mattermost-mysql mysqldump -u root -p${{ secrets.DB_MYSQL_ROOT_PASSWORD }} mattermost > mattermost_mysql_backup_${{ github.run_id }}.sql
+          echo Backup saved
+
+      - name: Start Target PostgreSQL
+        if: steps.check_status.outputs.already_migrated == 'false'
+        shell: cmd
+        run: |
+          docker compose -f %COMPOSE_FILE% up -d mattermost-postgres
+          ping -n 11 127.0.0.1 >nul
+
+      - name: Run pgloader (With Schema Drop for Idempotency)
+        if: steps.check_status.outputs.already_migrated == 'false'
+        shell: cmd
+        run: |
+          docker run --rm --network=legacy_mattermost_network mattermost/mattermost-pgloader:latest pgloader --with "include drop" mysql://root:${{ secrets.DB_MYSQL_ROOT_PASSWORD }}@mattermost-mysql/mattermost postgresql://mmuser:${{ secrets.DB_POSTGRES_PASSWORD }}@mattermost-postgres/mattermost
+
+      - name: Mark Migration as Completed
+        if: steps.check_status.outputs.already_migrated == 'false'
+        shell: cmd
+        run: type nul > "%FLAG_FILE%"
+
+      - name: Deploy Upgraded Stack
+        shell: cmd
+        run: |
+          docker compose -f %COMPOSE_FILE% up -d --build --remove-orphans
+          ping -n 31 127.0.0.1 >nul
+
+      - name: Run Health Checks & Verify Data
+        shell: cmd
+        run: |
+          curl -f http://localhost:8065/api/v4/system/ping
+          if errorlevel 1 (
+            docker compose -f %COMPOSE_FILE% logs
+            exit /b 1
+          )
+          echo Mattermost upgraded successfully and running on Postgres!
