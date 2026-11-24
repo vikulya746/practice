@@ -1,5 +1,5 @@
-<<<<<<< HEAD
-name: Idempotent Mattermost Migration & Upgrade
+name: Idempotent Mattermost Migration
+
 on:
   push:
     branches: [ "migration" ]
@@ -12,7 +12,6 @@ env:
 jobs:
   migrate-and-deploy:
     runs-on: self-hosted
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -37,7 +36,6 @@ jobs:
             exit /b 1
           )
           docker exec mattermost-mysql mysqldump -u root -p${{ secrets.DB_MYSQL_ROOT_PASSWORD }} mattermost > mattermost_mysql_backup_${{ github.run_id }}.sql
-          echo Backup saved
 
       - name: Start Target PostgreSQL
         if: steps.check_status.outputs.already_migrated == 'false'
@@ -46,7 +44,7 @@ jobs:
           docker compose -f %COMPOSE_FILE% up -d mattermost-postgres
           ping -n 11 127.0.0.1 >nul
 
-      - name: Run pgloader (With Schema Drop for Idempotency)
+      - name: Run pgloader
         if: steps.check_status.outputs.already_migrated == 'false'
         shell: cmd
         run: |
@@ -63,7 +61,7 @@ jobs:
           docker compose -f %COMPOSE_FILE% up -d --build --remove-orphans
           ping -n 31 127.0.0.1 >nul
 
-      - name: Run Health Checks & Verify Data
+      - name: Run Health Checks
         shell: cmd
         run: |
           curl -f http://localhost:8065/api/v4/system/ping
@@ -71,7 +69,3 @@ jobs:
             docker compose -f %COMPOSE_FILE% logs
             exit /b 1
           )
-          echo Mattermost upgraded successfully and running on Postgres!
-=======
-
->>>>>>> 2d9d0bd44243c281fdc6e3225eb69eeb5e090514
