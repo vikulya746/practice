@@ -51,7 +51,9 @@ jobs:
         if: steps.check_status.outputs.already_migrated == 'false'
         shell: cmd
         run: |
-          docker run --rm --network=legacy_mattermost_network mattermost/mattermost-pgloader:latest pgloader --with "include drop" mysql://root:${{ secrets.DB_MYSQL_ROOT_PASSWORD }}@mattermost-mysql/mattermost postgresql://mmuser:${{ secrets.DB_POSTGRES_PASSWORD }}@mattermost-postgres/mattermost
+          for /f "tokens=*" %%i in ('docker inspect -f "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}" mattermost-postgres') do set PG_IP=%%i
+          echo Targeting PostgreSQL at IP: %PG_IP%
+          docker run --rm --network=legacy_mattermost_network mattermost/mattermost-pgloader:latest pgloader --with "include drop" mysql://root:${{ secrets.DB_MYSQL_ROOT_PASSWORD }}@mattermost-mysql/mattermost postgresql://mmuser:${{ secrets.DB_POSTGRES_PASSWORD }}@%PG_IP%/mattermost
 
       - name: Mark Migration as Completed
         if: steps.check_status.outputs.already_migrated == 'false'
