@@ -42,18 +42,14 @@ jobs:
         shell: cmd
         run: |
           docker rm -f mattermost-postgres >nul 2>&1
-          docker compose -f %COMPOSE_FILE% up -d mattermost-postgres
-          timeout /t 5 /nobreak >nul
-          docker network connect legacy_mattermost_network mattermost-postgres
+          docker run -d --name mattermost-postgres --network legacy_mattermost_network -e POSTGRES_USER=mmuser -e POSTGRES_PASSWORD=${{ secrets.DB_POSTGRES_PASSWORD }} -e POSTGRES_DB=mattermost postgres:15-alpine
           ping -n 11 127.0.0.1 >nul
 
       - name: Run pgloader
         if: steps.check_status.outputs.already_migrated == 'false'
         shell: cmd
         run: |
-          for /f "tokens=*" %%i in ('docker inspect -f "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}" mattermost-postgres') do set PG_IP=%%i
-          echo Targeting PostgreSQL at IP: %PG_IP%
-          docker run --rm --network=legacy_mattermost_network mattermost/mattermost-pgloader:latest pgloader --with "include drop" mysql://root:${{ secrets.DB_MYSQL_ROOT_PASSWORD }}@mattermost-mysql/mattermost postgresql://mmuser:${{ secrets.DB_POSTGRES_PASSWORD }}@%PG_IP%/mattermost
+          docker run --rm --network=legacy_mattermost_network mattermost/mattermost-pgloader:latest pgloader --with "include drop" mysql://root:${{ secrets.DB_MYSQL_ROOT_PASSWORD }}@mattermost-mysql/mattermost postgresql://mmuser:${{ secrets.DB_POSTGRES_PASSWORD }}@mattermost-postgres/mattermost
 
       - name: Mark Migration as Completed
         if: steps.check_status.outputs.already_migrated == 'false'
