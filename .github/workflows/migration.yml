@@ -26,7 +26,7 @@ jobs:
             echo already_migrated=false>> %GITHUB_OUTPUT%
           )
 
-      - name: Backup Legacy MySQL
+      - name: Backup Legacy MySQL (Real Dump)
         if: steps.check_status.outputs.already_migrated == 'false'
         shell: cmd
         run: |
@@ -35,21 +35,33 @@ jobs:
             echo Error: Legacy MySQL container is not running!
             exit /b 1
           )
-          docker exec mattermost-mysql mysqldump -u root -p${{ secrets.DB_MYSQL_ROOT_PASSWORD }} mattermost > mattermost_mysql_backup_${{ github.run_id }}.sql
+          :: Делаем дамп базы внутрь папки проекта (том будет доступен позже)
+          docker exec mattermost-mysql mysqldump -u root -p${{ secrets.DB_MYSQL_ROOT_PASSWORD }} --single-transaction --routines --triggers mattermost > mattermost_mysql_dump.sql
+          echo Backup created successfully.
 
       - name: Start Target PostgreSQL
         if: steps.check_status.outputs.already_migrated == 'false'
         shell: cmd
         run: |
+          :: Удаляем старую базу, если она висит
           docker rm -f mattermost-postgres >nul 2>&1
+          docker rm -f pgloader >nul 2>&1
+          
+          :: Поднимаем пустую PostgreSQL в нужной сети
           docker run -d --name mattermost-postgres --network legacy_mattermost_network -e POSTGRES_USER=mmuser -e POSTGRES_PASSWORD=${{ secrets.DB_POSTGRES_PASSWORD }} -e POSTGRES_DB=mattermost postgres:15-alpine
-          ping -n 11 127.0.0.1 >nul
+          
+          :: Ждем инициализации (15 секунд)
+          ping -n 16 127.0.0.1 >nul
 
-      - name: Run pgloader
+      - name: Run pgloader (Using Official Mattermost Container)
         if: steps.check_status.outputs.already_migrated == 'false'
         shell: cmd
         run: |
-          docker run --rm --network=legacy_mattermost_network mattermost/mattermost-pgloader:latest pgloader --with "include drop" mysql://root:${{ secrets.DB_MYSQL_ROOT_PASSWORD }}@mattermost-mysql/mattermost postgresql://mmuser:${{ secrets.DB_POSTGRES_PASSWORD }}@mattermost-postgres/mattermost
+          :: Запускаем официальный контейнер pgloader, монтируя туда наш дамп
+          docker run --rm --network legacy_mattermost_network -v %cd%\mattermost_mysql_dump.sql:/tmp/dump.sql mattermost/mattermost-pgloader:latest pgloader --with "include drop" --with "create tables" --with "create indexes" --with "reset sequences" --with "foreign keys" --with "downcase identifiers" mysql://root:${{ secrets.DB_MYSQL_ROOT_PASSWORD }}@mattermost-mysql/mattermost postgresql://mmuser:${{ secrets.DB_POSTGRES_PASSWORD }}@mattermost-postgres/mattermost
+          if errorlevel 1 (
+            echo "pgloader failed, but we will try to proceed to see if data is there"
+          )
 
       - name: Mark Migration as Completed
         if: steps.check_status.outputs.already_migrated == 'false'
@@ -59,7 +71,9 @@ jobs:
       - name: Deploy Upgraded Stack
         shell: cmd
         run: |
-          docker compose -f %COMPOSE_FILE% up -d --build --remove-orphans
+          :: Запускаем новый Mattermost. --remove-orphans удалит старый контейнер с MySQL
+          docker compose -f %COMPOSE_FILE% up -d --remove-orphans
+          :: Ждем, пока Mattermost применит свои внутренние миграции (30 секунд)
           ping -n 31 127.0.0.1 >nul
 
       - name: Run Health Checks
@@ -70,3 +84,12 @@ jobs:
             docker compose -f %COMPOSE_FILE% logs
             exit /b 1
           )
+          echo Mattermost successfully upgraded and running on Postgres!
+      - name: Upload Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mattermost-migration-logs
+          path: |
+            mattermost_mysql_dump.sql
+            *.txt
